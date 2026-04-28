@@ -1,0 +1,7 @@
+PyQt5
+faster-whisper
+sounddevice
+numpy
+scipy
+argostranslate
+ctranslate2
