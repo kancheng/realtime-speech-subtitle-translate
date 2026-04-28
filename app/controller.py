@@ -47,7 +47,11 @@ class AppController(QObject):
         self._translation_thread: Optional[threading.Thread] = None
         self._source_lang = self.config.default_source_language
         self._target_lang = self.config.default_target_language
-        self._chunk_samples = int(self.config.sample_rate * self.config.chunk_duration_seconds)
+        self._silence_finalize_samples = int(
+            self.config.sample_rate * self.config.silence_finalize_seconds
+        )
+        self._min_sentence_samples = int(self.config.sample_rate * self.config.min_sentence_seconds)
+        self._max_sentence_samples = int(self.config.sample_rate * self.config.max_sentence_seconds)
 
     @property
     def running(self) -> bool:
@@ -113,24 +117,53 @@ class AppController(QObject):
         self._export_transcript()
 
     def _audio_worker(self) -> None:
-        """Collect raw audio and emit fixed-length chunks for ASR."""
-        buffer = np.array([], dtype=np.float32)
+        """Collect raw audio and emit sentence-level chunks for ASR."""
+        sentence_buffer = np.array([], dtype=np.float32)
+        speech_started = False
+        silence_samples = 0
+
+        def finalize_sentence() -> None:
+            nonlocal sentence_buffer, speech_started, silence_samples
+            if sentence_buffer.size >= self._min_sentence_samples:
+                self.asr_input_queue.put(sentence_buffer.copy())
+            sentence_buffer = np.array([], dtype=np.float32)
+            speech_started = False
+            silence_samples = 0
+
         while self._running:
             try:
                 data = self.audio_queue.get(timeout=0.2)
             except Empty:
                 continue
 
-            buffer = np.concatenate([buffer, data])
-            while buffer.size >= self._chunk_samples:
-                chunk = buffer[: self._chunk_samples]
-                buffer = buffer[self._chunk_samples :]
+            data = np.asarray(data, dtype=np.float32).reshape(-1)
+            if data.size == 0:
+                continue
 
-                rms = float(np.sqrt(np.mean(np.square(chunk)))) if chunk.size else 0.0
-                if rms < self.config.rms_threshold:
-                    logger.debug("Skipped quiet chunk (rms=%.5f).", rms)
-                    continue
-                self.asr_input_queue.put(chunk)
+            rms = float(np.sqrt(np.mean(np.square(data))))
+            is_speech = rms >= self.config.rms_threshold
+
+            if is_speech:
+                speech_started = True
+                silence_samples = 0
+                sentence_buffer = np.concatenate([sentence_buffer, data])
+            elif speech_started:
+                sentence_buffer = np.concatenate([sentence_buffer, data])
+                silence_samples += data.size
+
+            if not speech_started:
+                continue
+
+            if sentence_buffer.size >= self._max_sentence_samples:
+                finalize_sentence()
+                continue
+
+            if silence_samples >= self._silence_finalize_samples:
+                finalize_sentence()
+
+        # Flush remaining audio when worker stops.
+        if sentence_buffer.size >= self._min_sentence_samples:
+            self.asr_input_queue.put(sentence_buffer.copy())
 
     def _asr_worker(self) -> None:
         """Run speech recognition for each audio chunk."""
@@ -146,6 +179,9 @@ class AppController(QObject):
             if result.error:
                 logger.debug("ASR skipped: %s", result.error)
                 continue
+            # Show source subtitle immediately to reduce perceived latency.
+            self.subtitle_updated.emit(result.text, "Translating...")
+            self.status_updated.emit("Recognized. Translating...")
             self.text_queue.put(result.text)
 
     def _translation_worker(self) -> None:
@@ -163,7 +199,7 @@ class AppController(QObject):
             entry = self.subtitle_manager.add_subtitle(source_text, translated)
             if entry:
                 self.subtitle_updated.emit(entry.source_text, entry.translated_text)
-                self.status_updated.emit("Recognizing and translating...")
+                self.status_updated.emit("Live")
 
     def _export_transcript(self) -> None:
         """Write transcript output when processing stops."""

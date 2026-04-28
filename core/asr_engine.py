@@ -14,6 +14,14 @@ from core.device_utils import WhisperRuntime, get_recommended_runtime
 logger = logging.getLogger(__name__)
 
 
+def normalize_asr_language(language: str) -> str:
+    """Map UI language codes to faster-whisper compatible codes."""
+    normalized = (language or "").strip().lower()
+    if normalized == "zt":
+        return "zh"
+    return normalized
+
+
 @dataclass
 class ASRResult:
     """Structured ASR output."""
@@ -81,18 +89,19 @@ class ASREngine:
         if np.max(np.abs(audio), initial=0.0) < 1e-4:
             return ASRResult(text="", language=language, error="Audio too quiet.")
 
+        asr_language = normalize_asr_language(language)
         try:
             segments, info = self.model.transcribe(
                 audio,
-                language=language,
+                language=asr_language,
                 beam_size=self.beam_size,
                 vad_filter=True,
             )
             text = " ".join(segment.text.strip() for segment in segments if segment.text).strip()
             if not text:
-                return ASRResult(text="", language=language, error="No speech detected.")
-            return ASRResult(text=text, language=getattr(info, "language", language))
+                return ASRResult(text="", language=asr_language, error="No speech detected.")
+            return ASRResult(text=text, language=getattr(info, "language", asr_language))
         except Exception as exc:
             logger.exception("ASR transcription failed: %s", exc)
-            return ASRResult(text="", language=language, error=str(exc))
+            return ASRResult(text="", language=asr_language, error=str(exc))
 

@@ -62,11 +62,17 @@ python main.py
 
 ## 6. 如何安裝 Argos Translate 語言模型
 
-本專案不自動下載翻譯模型。請手動安裝對應語言包。
+啟動程式時，若偵測到預設翻譯模型不存在，會先詢問你安裝方式：
+
+- 預設語言對：`en -> zt` 與 `zt -> en`（英文 <-> 繁體中文）
+- 預設選項：線上安裝（自動從 Argos package index 下載）
+- 替代選項：手動指定資料夾，掃描並安裝 `*.argosmodel`
+
+Argos package index：<https://www.argosopentech.com/argospm/index/>
 
 ### 方式 A：使用 Argos GUI/CLI 工具
 
-可到 [Argos Translate 官方專案](https://github.com/argosopentech/argos-translate) 下載語言模型後安裝。
+可到 [Argos Translate 官方專案](https://github.com/argosopentech/argos-translate) 或 [Argos Package Index](https://www.argosopentech.com/argospm/index/) 下載語言模型後安裝。
 
 ### 方式 B：Python 腳本（手動執行）
 
@@ -75,7 +81,7 @@ import argostranslate.package
 
 available = argostranslate.package.get_available_packages()
 package_to_install = next(
-    p for p in available if p.from_code == "en" and p.to_code == "zh"
+    p for p in available if p.from_code == "en" and p.to_code == "zt"
 )
 download_path = package_to_install.download()
 argostranslate.package.install_from_path(download_path)
@@ -83,7 +89,7 @@ argostranslate.package.install_from_path(download_path)
 
 若未安裝對應語言包，GUI 會顯示：
 
-`Translation package not installed for en to zh.`
+`Translation package not installed for en to zt.`
 
 ## 7. CPU 模式說明
 
